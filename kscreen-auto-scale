@@ -1,0 +1,75 @@
+#!/usr/bin/python3
+import json
+import subprocess
+import logging
+from typing import TypedDict
+from pathlib import Path
+
+
+LOG_FILE = Path(__file__).parent / "log.txt"
+logging.basicConfig(
+    filename=LOG_FILE, level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s"
+)
+
+
+class OutputProfile(TypedDict):
+    width: int
+    height: int
+    name: str
+
+
+class DisplayConfig(TypedDict):
+    priority: int
+    name: str
+    scale: float
+    outputs: list[OutputProfile]
+    physical_size: tuple[int, int]
+    current_size: tuple[int, int]
+
+
+def display_config() -> list[DisplayConfig]:
+    stdout = subprocess.check_output(
+        ["kscreen-doctor", "--json"], encoding="utf-8")
+    data = json.loads(stdout)
+    configs: list[DisplayConfig] = []
+    for output in data["outputs"]:
+        configs.append(DisplayConfig(
+            priority=output["priority"],
+            name=output["name"],
+            scale=output["scale"],
+            physical_size=(
+                output["sizeMM"]["width"], output["sizeMM"]["height"]
+            ),
+            current_size=(output["size"]["width"], output["size"]["height"]),
+            outputs=[
+                OutputProfile(
+                    width=mode["size"]["width"],
+                    height=mode["size"]["height"],
+                    name=mode["name"]
+                ) for mode in output["modes"]
+            ]
+        ))
+    return configs
+
+
+if __name__ == "__main__":
+    configs = display_config()
+    for config in configs:
+        if config["name"] == "eDP-1":
+            continue  # Skip main monitor
+        logging.info(
+            "Checking monitor %s: %sx%s, scale %sx",
+            config["name"], config["current_size"][0], config["current_size"][1],
+            config["scale"]
+        )
+        recommended_scale = round(config["current_size"][0] / 1536, 2)
+
+        if not 0.9 < config["scale"] / recommended_scale < 1.1:
+            logging.info("suggest %s -> %s",
+                         config["scale"], recommended_scale)
+            stdout = subprocess.check_output([
+                "kscreen-doctor",
+                f"output.{config['name']}.scale.{recommended_scale}"
+            ], encoding="utf-8", stderr=subprocess.STDOUT)
+            logging.info("KScreen: %s", stdout)
